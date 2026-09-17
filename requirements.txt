@@ -3,7 +3,8 @@
 fastapi
 uvicorn
 pydantic
-cloakbrowser
+cloakbrowser>=0.5.10
+httpx>=0.28.0
 pillow
 # aliyun solver gap detector: YOLOv8n ONNX (thread-limited to 2 cores) with a cv2
 # fallback. opencv-python-headless (not the GUI build — no libGL on servers).
