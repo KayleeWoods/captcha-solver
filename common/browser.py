@@ -88,8 +88,15 @@ def browser_kwargs(prefix: str, proxy: str | None = None) -> dict:
     over env var.
     """
     default_headless = "1" if prefix == "TURNSTILE" else "0"
-    kw = {"humanize": True,
-          "headless": os.getenv(f"{prefix}_HEADLESS", default_headless) != "0"}
+    kw = {
+        "humanize": True,
+        "headless": os.getenv(f"{prefix}_HEADLESS", default_headless) != "0",
+        "args": [
+            "--disable-dev-shm-usage",
+            "--disk-cache-size=10485760",
+            "--js-flags=--max-old-space-size=256",
+        ]
+    }
     if proxy:
         kw["proxy"] = proxy
     elif os.getenv(f"{prefix}_PROXY"):
