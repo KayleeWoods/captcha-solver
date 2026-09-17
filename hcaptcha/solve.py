@@ -32,11 +32,17 @@ HTML_TEMPLATE = _TEMPLATE_PATH.read_text()
 
 _KEYFILE = Path(__file__).parent.parent / "common" / "apikey.txt"
 _keypool = None
+_keyfile_warned = False
 
 
 def _get_keypool():
-    """Lazy, shared KeyPool for hCaptcha image solving."""
-    global _keypool
+    """Lazy, shared KeyPool for hCaptcha image solving. None when no key file."""
+    global _keypool, _keyfile_warned
+    if not _KEYFILE.exists():
+        if not _keyfile_warned:
+            _keyfile_warned = True
+            log.warning("hCaptcha image challenges unavailable until %s is provided", _KEYFILE)
+        return None
     if _keypool is None:
         model = os.getenv("HCAPTCHA_MISTRAL_MODEL", "mistral-medium-latest")
         _keypool = KeyPool(str(_KEYFILE), model=model, start_index=os.getpid())
@@ -152,7 +158,11 @@ async def _solve_challenge(page) -> bool:
     for fr in page.frames:
         u = fr.url or ""
         if "#frame=challenge" in u and "hcaptcha" in u:
-            return await solve_hcaptcha_challenge(fr, page, _get_keypool())
+            keypool = _get_keypool()
+            if keypool is None:
+                log.warning("hCaptcha image challenge present but no Mistral key pool — leaving unsolved")
+                return False
+            return await solve_hcaptcha_challenge(fr, page, keypool)
     return False
 
 

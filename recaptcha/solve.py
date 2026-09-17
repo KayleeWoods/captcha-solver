@@ -36,6 +36,9 @@ _keypool = None
 
 
 def _build_keypool():
+    if not _KEYFILE.exists():
+        log.warning("Mistral key pool unavailable: %s not found", _KEYFILE)
+        return None
     model = os.getenv("RECAPTCHA_MISTRAL_MODEL", "mistral-medium-latest")
     # vary the start offset by pid so concurrent procs don't hammer key #0
     return KeyPool(str(_KEYFILE), model=model, start_index=os.getpid())
@@ -59,7 +62,11 @@ def _get_keypool():
             _keypool = HybridClassifier(onnx, _build_keypool())
             log.info("reCAPTCHA image classifier: ONNX (hybrid, Mistral fallback)")
         else:
-            _keypool = _build_keypool()
+            kp = _build_keypool()
+            if kp is None:
+                log.warning("reCAPTCHA image classifier unavailable: no ONNX model and no Mistral key pool")
+                return None
+            _keypool = kp
             log.info("reCAPTCHA image classifier: Mistral only (no ONNX model found)")
     return _keypool
 
@@ -360,7 +367,11 @@ async def solve_recaptcha_v2(sitekey: str, url: str,
                     # Image-solve (audio is IP-blocked). Vision via Mistral key pool.
                     if challenge:
                         try:
-                            await solve_image_challenge(page, _get_keypool())
+                            classifier = _get_keypool()
+                            if classifier is None:
+                                log.warning("image-solve skipped: no ONNX classifier or Mistral key pool")
+                            else:
+                                await solve_image_challenge(page, classifier)
                         except Exception as e:
                             log.warning("image-solve: %s", str(e).splitlines()[0])
                         token = await _get_token(page)
