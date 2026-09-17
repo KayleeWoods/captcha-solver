@@ -24,3 +24,5 @@ CLAUDE.md
 .kiro/
 # ONNX models (downloaded from HuggingFace, ~1.4GB)
 arkose/models/
+bai_keys.txt
+**/bai_keys.txt
