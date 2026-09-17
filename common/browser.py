@@ -9,6 +9,10 @@ import json
 import logging
 import os
 import re
+from contextlib import asynccontextmanager
+from urllib.parse import urlparse
+
+import cloakbrowser
 
 log = logging.getLogger(__name__)
 
@@ -147,3 +151,68 @@ async def run_post_fetch(page, post_fetch: list, token: str) -> list:
             log.warning("post_fetch %s failed: %s", pf_url, e)
             results.append({"url": pf_url, "status": 0, "body": str(e)})
     return results
+
+
+class WarmBrowserManager:
+    """Singleton managing a persistent warm Chromium instance.
+
+    Avoids cold-launching Chromium per solve (~3s startup overhead + ~800MB allocation spike).
+    Instead maintains one warm browser and opens lightweight BrowserContexts (~20ms).
+    Automatically recycles after `max_solves` to prevent any memory bloat over time.
+    """
+
+    def __init__(self, max_solves: int = 50):
+        self._browser = None
+        self._lock = asyncio.Lock()
+        self._solves = 0
+        self._max_solves = max_solves
+
+    async def get_browser(self):
+        async with self._lock:
+            if self._browser is None or not self._browser.is_connected() or self._solves >= self._max_solves:
+                if self._browser is not None:
+                    try:
+                        await self._browser.close()
+                    except Exception:
+                        pass
+                log.info("Launching / recycling warm stealth Chromium (solve count: %d)...", self._solves)
+                kw = browser_kwargs("TURNSTILE")
+                self._browser = await cloakbrowser.launch_async(**kw)
+                self._solves = 0
+            self._solves += 1
+            return self._browser
+
+    async def close(self):
+        async with self._lock:
+            if self._browser is not None:
+                try:
+                    await self._browser.close()
+                except Exception:
+                    pass
+                self._browser = None
+                self._solves = 0
+
+
+browser_manager = WarmBrowserManager()
+
+
+@asynccontextmanager
+async def warm_context(proxy: str | None = None):
+    """Context manager yielding an isolated BrowserContext from the warm browser."""
+    browser = await browser_manager.get_browser()
+    context_kw = {}
+    if proxy:
+        u = urlparse(proxy)
+        p_dict = {"server": f"{u.scheme}://{u.hostname}:{u.port}"}
+        if u.username:
+            p_dict["username"] = u.username
+        if u.password:
+            p_dict["password"] = u.password
+        context_kw["proxy"] = p_dict
+
+    ctx = await browser.new_context(**context_kw)
+    try:
+        yield ctx
+    finally:
+        await ctx.close()
+

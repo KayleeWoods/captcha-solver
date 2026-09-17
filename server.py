@@ -16,6 +16,8 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
+from common.browser import browser_manager
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("captcha-solver")
 
@@ -63,6 +65,23 @@ app = FastAPI(
         "filter": True,
     },
 )
+
+
+@app.on_event("startup")
+async def on_startup():
+    log.info("Pre-warming stealth Chromium...")
+    try:
+        await browser_manager.get_browser()
+        log.info("Stealth Chromium warm and ready.")
+    except Exception as e:
+        log.warning("Could not pre-warm browser on startup: %s", e)
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    log.info("Shutting down warm Chromium...")
+    await browser_manager.close()
+
 
 # Non-enforcing Bearer scheme: makes Swagger UI show an Authorize button and forward the
 # token on "Try it out". auto_error=False means a missing/malformed token yields None and

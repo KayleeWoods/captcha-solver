@@ -5,15 +5,22 @@ target origin, then verify the token from the same browser session (keeps the
 origin/cookies and stays inside the token's 300s single-use window).
 """
 import asyncio
-import os
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
 import cloakbrowser
 
-from common.browser import browser_kwargs, run_pre_actions, run_post_fetch, fetch_from_page, route_glob
+from common.browser import (
+    browser_kwargs,
+    fetch_from_page,
+    route_glob,
+    run_post_fetch,
+    run_pre_actions,
+    warm_context,
+)
 
 log = logging.getLogger(__name__)
 # Global semaphore to allow up to N concurrent Playwright browser sessions
@@ -71,9 +78,8 @@ async def solve_turnstile(sitekey: str, url: str, action: str = None,
                + '></div>')
         page_data = HTML_TEMPLATE.replace("<!-- cf turnstile -->", div)
 
-        browser = await cloakbrowser.launch_async(**_browser_kwargs(proxy=proxy))
-        try:
-            page = await browser.new_page()
+        async with warm_context(proxy=proxy) as ctx:
+            page = await ctx.new_page()
             try:
                 await page.route(route_glob(target), lambda r: r.fulfill(body=page_data,
                                                              status=200))
@@ -84,8 +90,6 @@ async def solve_turnstile(sitekey: str, url: str, action: str = None,
                         "method": "route"}
             finally:
                 await page.close()
-        finally:
-            await browser.close()
 
 
 # ── solve_and_verify ────────────────────────────────────────────────
@@ -105,9 +109,8 @@ async def solve_and_verify(sitekey: str, verify_url: str,
                + '></div>')
         page_data = HTML_TEMPLATE.replace("<!-- cf turnstile -->", div)
 
-        browser = await cloakbrowser.launch_async(**_browser_kwargs(proxy=proxy))
-        try:
-            page = await browser.new_page()
+        async with warm_context(proxy=proxy) as ctx:
+            page = await ctx.new_page()
             try:
                 await page.route(route_glob(target), lambda r: r.fulfill(
                     body=page_data, status=200))
@@ -131,8 +134,6 @@ async def solve_and_verify(sitekey: str, verify_url: str,
                         "method": "route_and_verify"}
             finally:
                 await page.close()
-        finally:
-            await browser.close()
 
 
 # ── Real-page solver ────────────────────────────────────────────────
@@ -220,8 +221,8 @@ async def solve_turnstile_realpage(url: str, sitekey: str = None,
     t0 = time.monotonic()
 
     async with _solve_lock:
-        async with await cloakbrowser.launch_async(**_browser_kwargs()) as browser:
-            page = await browser.new_page()
+        async with warm_context() as ctx:
+            page = await ctx.new_page()
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=45000)
 
