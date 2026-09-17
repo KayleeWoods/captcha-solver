@@ -10,7 +10,7 @@ So the server dispatches aliyun to THIS script as its own process: its main thre
 asyncio.run, exactly reproducing the working direct-call conditions. Prints a single JSON
 line to stdout.
 
-Usage: python -m aliyun._run <scene_id> <prefix> <region> <timeout_s> [proxy]
+Usage: python -m aliyun._run <scene_id> <prefix> <region> <timeout_s> [proxy] [skip_verify]
 """
 import asyncio
 import json
@@ -25,10 +25,11 @@ def main():
     region = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else "sgp"
     timeout_s = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else 90
     proxy = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
+    skip_verify = sys.argv[6] == "1" if len(sys.argv) > 6 else False
     try:
         r = asyncio.run(solve_aliyun(
             scene_id=scene_id, prefix=prefix, region=region,
-            proxy=proxy, timeout_s=timeout_s))
+            proxy=proxy, timeout_s=timeout_s, skip_verify=skip_verify))
     except Exception as e:
         r = {"solved": False, "error": f"runner: {e}"}
     # single JSON line on the last line of stdout (solver logs go to stderr/logging above)

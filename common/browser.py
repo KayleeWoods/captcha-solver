@@ -79,16 +79,20 @@ async def run_pre_actions(page, actions: list):
         await asyncio.sleep(0.5)
 
 
-def browser_kwargs(prefix: str) -> dict:
+def browser_kwargs(prefix: str, proxy: str | None = None) -> dict:
     """Browser-trust levers, env-configurable per solver.
 
     prefix is TURNSTILE | RECAPTCHA | HCAPTCHA. Turnstile defaults headless=1;
     the interactive-checkbox solvers (recaptcha/hcaptcha) default headless=0.
+    proxy: per-request override (scheme://user:pass@host:port). Takes precedence
+    over env var.
     """
     default_headless = "1" if prefix == "TURNSTILE" else "0"
     kw = {"humanize": True,
           "headless": os.getenv(f"{prefix}_HEADLESS", default_headless) != "0"}
-    if os.getenv(f"{prefix}_PROXY"):
+    if proxy:
+        kw["proxy"] = proxy
+    elif os.getenv(f"{prefix}_PROXY"):
         kw["proxy"] = os.environ[f"{prefix}_PROXY"]
     if os.getenv(f"{prefix}_GEOIP") == "1":
         kw["geoip"] = True

@@ -5,6 +5,7 @@ target origin, then verify the token from the same browser session (keeps the
 origin/cookies and stays inside the token's 300s single-use window).
 """
 import asyncio
+import os
 import json
 import logging
 import time
@@ -15,13 +16,15 @@ import cloakbrowser
 from common.browser import browser_kwargs, run_pre_actions, run_post_fetch, fetch_from_page, route_glob
 
 log = logging.getLogger(__name__)
-_solve_lock = asyncio.Lock()
+# Global semaphore to allow up to N concurrent Playwright browser sessions
+# Default 3 concurrent solves so multi-worker signup won't queue up sequentially
+_solve_lock = asyncio.Semaphore(int(os.getenv("TURNSTILE_MAX_CONCURRENT", "4")))
 _TEMPLATE_PATH = Path(__file__).parent / "template.html"
 HTML_TEMPLATE = _TEMPLATE_PATH.read_text()
 
 
-def _browser_kwargs() -> dict:
-    return browser_kwargs("TURNSTILE")
+def _browser_kwargs(proxy: str | None = None) -> dict:
+    return browser_kwargs("TURNSTILE", proxy=proxy)
 
 
 def _error_codes(body: str) -> list:
@@ -57,7 +60,7 @@ async def _get_turnstile_response_route(page, max_attempts: int = 20) -> str:
 
 
 async def solve_turnstile(sitekey: str, url: str, action: str = None,
-                          cdata: str = None) -> dict:
+                          cdata: str = None, proxy: str | None = None) -> dict:
     """Solve Turnstile via route interception. Returns {token, expires_in}."""
     t0 = time.monotonic()
     async with _solve_lock:
@@ -68,7 +71,8 @@ async def solve_turnstile(sitekey: str, url: str, action: str = None,
                + '></div>')
         page_data = HTML_TEMPLATE.replace("<!-- cf turnstile -->", div)
 
-        async with await cloakbrowser.launch_async(**_browser_kwargs()) as browser:
+        browser = await cloakbrowser.launch_async(**_browser_kwargs(proxy=proxy))
+        try:
             page = await browser.new_page()
             try:
                 await page.route(route_glob(target), lambda r: r.fulfill(body=page_data,
@@ -80,6 +84,8 @@ async def solve_turnstile(sitekey: str, url: str, action: str = None,
                         "method": "route"}
             finally:
                 await page.close()
+        finally:
+            await browser.close()
 
 
 # ── solve_and_verify ────────────────────────────────────────────────
@@ -87,7 +93,8 @@ async def solve_turnstile(sitekey: str, url: str, action: str = None,
 async def solve_and_verify(sitekey: str, verify_url: str,
                            verify_payload: dict = None,
                            action: str = None, cdata: str = None,
-                           page_url: str = None) -> dict:
+                           page_url: str = None,
+                           proxy: str | None = None) -> dict:
     """Solve via route-intercept, then verify from the same browser session."""
     t0 = time.monotonic()
     async with _solve_lock:
@@ -98,7 +105,8 @@ async def solve_and_verify(sitekey: str, verify_url: str,
                + '></div>')
         page_data = HTML_TEMPLATE.replace("<!-- cf turnstile -->", div)
 
-        async with await cloakbrowser.launch_async(**_browser_kwargs()) as browser:
+        browser = await cloakbrowser.launch_async(**_browser_kwargs(proxy=proxy))
+        try:
             page = await browser.new_page()
             try:
                 await page.route(route_glob(target), lambda r: r.fulfill(
@@ -115,19 +123,16 @@ async def solve_and_verify(sitekey: str, verify_url: str,
                 # interpolated into JS source (injection-safe).
                 result = await fetch_from_page(
                     page, verify_url, "POST", json.dumps(payload))
-                codes = _error_codes(result["body"])
-                # Do NOT log the response body — it may carry session tokens/JWTs.
-                log.info("Route-intercept verify: %d codes=%s",
-                         result["status"], codes)
-
-                return {"token": token, "expires_in": 300,
-                        "verify_status": result["status"],
+                errs = _error_codes(result.get("body", ""))
+                return {"token": token, "verify_status": result["status"],
                         "verify_body": result["body"],
-                        "verify_error_codes": codes,
-                        "method": "route",
-                        "elapsed": round(time.monotonic() - t0, 1)}
+                        "verify_success": result["status"] in (200, 201) and not errs,
+                        "elapsed": round(time.monotonic() - t0, 1),
+                        "method": "route_and_verify"}
             finally:
                 await page.close()
+        finally:
+            await browser.close()
 
 
 # ── Real-page solver ────────────────────────────────────────────────

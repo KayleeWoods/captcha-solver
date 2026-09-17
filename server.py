@@ -230,6 +230,7 @@ class SolveRequest(BaseModel):
     scene_id: Optional[str] = Field(None, description="aliyun: the SceneId of the target site's captcha (e.g. read from the page config). Required for type=aliyun.")
     prefix: Optional[str] = Field(None, description="aliyun: the captcha-open endpoint prefix (e.g. '13lbkb5' -> <prefix>.captcha-open-southeast.aliyuncs.com). Required for type=aliyun.")
     region: Optional[str] = Field(None, description="aliyun: captcha region — 'sgp' (default), 'cn', or 'intl'.")
+    skip_verify: Optional[bool] = Field(False, description="aliyun: skip server-side verify (return raw token for external verification).")
 
     # arkose-only (Arkose FunCaptcha)
     public_key: Optional[str] = Field(None, description="arkose: Arkose public key from the target site's embed. Required for type=arkose.")
@@ -380,13 +381,14 @@ async def _dispatch(req: SolveRequest) -> dict:
             if req.verify_url and req.verify_payload:
                 r = await solve_and_verify(
                     req.sitekey, req.verify_url, req.verify_payload, req.action,
-                    cdata=req.cdata, page_url=req.page_url)
+                    cdata=req.cdata, page_url=req.page_url, proxy=req.proxy)
             elif req.real_page:
                 actions, fetches = _extract(req)
                 r = await solve_turnstile_realpage(
                     req.url, req.sitekey, req.timeout_s, actions, fetches)
             else:
-                r = await solve_turnstile(req.sitekey, req.url, req.action, req.cdata)
+                r = await solve_turnstile(req.sitekey, req.url, req.action, req.cdata,
+                                          proxy=req.proxy)
         except TimeoutError as e:
             r = {"token": "", "error": str(e), "method": "route"}
         return {"type": "turnstile", **r}
@@ -457,7 +459,7 @@ async def _dispatch(req: SolveRequest) -> dict:
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "aliyun._run",
             req.scene_id or "", req.prefix or "", req.region or "sgp",
-            str(_to), req.proxy or "",
+            str(_to), req.proxy or "", "1" if req.skip_verify else "0",
             cwd=_os.path.dirname(_os.path.abspath(__file__)),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:

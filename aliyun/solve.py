@@ -110,7 +110,7 @@ async def _verify_in_page(page, tok: dict, scene_id: str, prefix: str) -> str:
 
 async def solve_aliyun(scene_id: str, prefix: str, region: str = "sgp",
                        proxy: str = None, timeout_s: int = 90,
-                       max_attempts: int = 12) -> dict:
+                       max_attempts: int = 12, skip_verify: bool = False) -> dict:
     if not scene_id or not prefix:
         return {"solved": False, "error": "scene_id and prefix are required"}
 
@@ -276,7 +276,7 @@ async def solve_aliyun(scene_id: str, prefix: str, region: str = "sgp",
         if not await load_once():
             return {"solved": False, "error": "SDK failed to load (window.__ready never true)"}
 
-        async def _attempt_puzzle(attempt, type_name):
+        async def _attempt_puzzle(attempt, type_name, skip_verify=False):
             # PUZZLE + INPAINTING share this path: open popup → wait for slider+images
             # → detect gap (YOLO/cv2, with DOM fallback for base64 data-URL images) →
             # quadratic overshoot drag → harvest token → verify. Preserved exactly from
@@ -306,13 +306,16 @@ async def solve_aliyun(scene_id: str, prefix: str, region: str = "sgp",
                          attempt, type_name, g.get("method", "cv2"), g["gap_x"], dist)
                 return None
             token = tok if isinstance(tok, dict) else json.loads(tok)
-            code = await _verify_in_page(page, token, scene_id, prefix)
+            if skip_verify:
+                code = "SKIP"
+            else:
+                code = await _verify_in_page(page, token, scene_id, prefix)
             log.info("aliyun attempt %d [%s]: method=%s gap_x=%s dist=%.1f -> %s",
                      attempt, type_name, g.get("method", "cv2"), g["gap_x"], dist, code)
             return {"token": token, "verify_code": code,
                     "method": "quadratic-slide", "gap_x": g["gap_x"]}
 
-        async def _attempt_slide(attempt, type_name):
+        async def _attempt_slide(attempt, type_name, skip_verify=False):
             # SLIDE: drag the slider the full track width. No gap detection, no images.
             # The track width is read from the slider container's bounding box; drag
             # (track_width - handle_width) so the handle reaches the end.
@@ -348,12 +351,15 @@ async def solve_aliyun(scene_id: str, prefix: str, region: str = "sgp",
                          attempt, type_name, dist)
                 return None
             token = tok if isinstance(tok, dict) else json.loads(tok)
-            code = await _verify_in_page(page, token, scene_id, prefix)
+            if skip_verify:
+                code = "SKIP"
+            else:
+                code = await _verify_in_page(page, token, scene_id, prefix)
             log.info("aliyun attempt %d [%s]: dist=%.1f -> %s",
                      attempt, type_name, dist, code)
             return {"token": token, "verify_code": code, "method": "full-slide"}
 
-        async def _attempt_traceless(attempt, type_name):
+        async def _attempt_traceless(attempt, type_name, skip_verify=False):
             # TRACELESS: silent. Click the button (or call startTracelessVerification)
             # → captchaVerifyCallback fires immediately, no popup/slider/vision.
             await page.evaluate("()=>{window.__verify=null;}")
@@ -372,11 +378,14 @@ async def solve_aliyun(scene_id: str, prefix: str, region: str = "sgp",
                 log.info("aliyun attempt %d [%s]: NO CALLBACK", attempt, type_name)
                 return None
             token = tok if isinstance(tok, dict) else json.loads(tok)
-            code = await _verify_in_page(page, token, scene_id, prefix)
+            if skip_verify:
+                code = "SKIP"
+            else:
+                code = await _verify_in_page(page, token, scene_id, prefix)
             log.info("aliyun attempt %d [%s]: -> %s", attempt, type_name, code)
             return {"token": token, "verify_code": code, "method": "traceless"}
 
-        async def _attempt_oneclick(attempt, type_name):
+        async def _attempt_oneclick(attempt, type_name, skip_verify=False):
             # ONE_CLICK: single click on the checkbox/button, then await callback.
             await page.evaluate("()=>{window.__verify=null;}")
             box = await page.evaluate(
@@ -404,7 +413,10 @@ async def solve_aliyun(scene_id: str, prefix: str, region: str = "sgp",
                 log.info("aliyun attempt %d [%s]: NO CALLBACK", attempt, type_name)
                 return None
             token = tok if isinstance(tok, dict) else json.loads(tok)
-            code = await _verify_in_page(page, token, scene_id, prefix)
+            if skip_verify:
+                code = "SKIP"
+            else:
+                code = await _verify_in_page(page, token, scene_id, prefix)
             log.info("aliyun attempt %d [%s]: -> %s", attempt, type_name, code)
             return {"token": token, "verify_code": code, "method": "one-click"}
 
@@ -429,11 +441,11 @@ async def solve_aliyun(scene_id: str, prefix: str, region: str = "sgp",
             if attempt > 0 and not await load_once():
                 continue
 
-            res = await attempt_fn(attempt, type_name)
+            res = await attempt_fn(attempt, type_name, skip_verify=skip_verify)
             if not res:
                 continue
             last_code = res["verify_code"]
-            if res["verify_code"] == "T001":
+            if res["verify_code"] in ("T001", "SKIP"):
                 return {
                     "solved": True, "token": res["token"],
                     "verify_code": res["verify_code"], "method": res["method"],
