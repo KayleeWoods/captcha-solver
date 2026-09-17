@@ -31,7 +31,7 @@ from .image_solve import solve_image_challenge
 
 log = logging.getLogger(__name__)
 
-_KEYFILE = Path(__file__).parent.parent / "common" / "apikey.txt"
+_KEYFILE = (Path(__file__).parent.parent / "common" / "bai_keys.txt" if (Path(__file__).parent.parent / "common" / "bai_keys.txt").exists() else Path(__file__).parent.parent / "common" / "apikey.txt")
 _keypool = None
 
 

@@ -30,7 +30,7 @@ _solve_lock = asyncio.Lock()
 _TEMPLATE_PATH = Path(__file__).parent / "template.html"
 HTML_TEMPLATE = _TEMPLATE_PATH.read_text()
 
-_KEYFILE = Path(__file__).parent.parent / "common" / "apikey.txt"
+_KEYFILE = (Path(__file__).parent.parent / "common" / "bai_keys.txt" if (Path(__file__).parent.parent / "common" / "bai_keys.txt").exists() else Path(__file__).parent.parent / "common" / "apikey.txt")
 _keypool = None
 _keyfile_warned = False
 
