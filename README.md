@@ -81,14 +81,22 @@ maintain. Open in a browser (no token needed):
 
 ## Running
 
-Runs as a **systemd system service** (`captcha-solver.service`, enabled, reboot-safe):
+Manage the solver on-demand using the **`solve-ctl`** CLI tool:
 
 ```bash
-sudo systemctl status captcha-solver.service     # active (running)
-sudo systemctl restart captcha-solver.service     # picks up code changes
-sudo systemctl stop captcha-solver.service
-sudo journalctl -u captcha-solver.service -f       # live logs
+./solve-ctl start       # Start Xvfb 720p + warm browser pool in background & wait for readiness
+./solve-ctl status      # Show PID, RAM usage, and health
+./solve-ctl test        # Run live self-test against Turnstile, reCAPTCHA, and hCaptcha
+./solve-ctl logs        # Tail live solver logs
+./solve-ctl restart     # Graceful restart
+./solve-ctl stop        # Clean shutdown and release all RAM
 ```
+
+The server includes an **Auto-Shutdown Watchdog** (`SOLVER_IDLE_MINUTES=30`). When run on-demand, it will automatically shut down and free all RAM after 30 minutes of inactivity.
+
+### Systemd service (optional)
+
+If you prefer running as an always-on background daemon:
 
 The unit (`/etc/systemd/system/captcha-solver.service`) runs the server headful
 under a virtual display so the interactive Turnstile/reCAPTCHA paths work on a

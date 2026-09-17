@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# solve-ctl — CLI manager for Captcha Solver sidecar (:8877)
+# Commands: start, stop, restart, status, logs, test
+
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$DIR"
+
+PORT="${PORT:-8877}"
+LOG_FILE="/tmp/solver_run.log"
+PID_FILE="/tmp/solver_8877.pid"
+
+is_running() {
+    if command -v fuser >/dev/null 2>&1; then
+        fuser "${PORT}/tcp" >/dev/null 2>&1
+    else
+        ss -tlnp "sport = :${PORT}" 2>/dev/null | grep -q "${PORT}"
+    fi
+}
+
+get_pid() {
+    if command -v fuser >/dev/null 2>&1; then
+        fuser "${PORT}/tcp" 2>/dev/null | awk '{print $1}'
+    else
+        ss -tlnp "sport = :${PORT}" 2>/dev/null | grep -oP 'pid=\K\d+' | head -n1
+    fi
+}
+
+start_solver() {
+    if is_running; then
+        echo "Solver is already running on port ${PORT} (PID: $(get_pid))."
+        return 0
+    fi
+
+    echo "Starting Captcha Solver on port ${PORT}..."
+    setsid nohup ./start.sh > "$LOG_FILE" 2>&1 < /dev/null &
+    
+    # Wait for health endpoint
+    echo -n "Waiting for warm stealth Chromium and API readiness..."
+    for i in {1..30}; do
+        if curl -s -m 2 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+            echo " Ready!"
+            echo "Status: ONLINE (PID: $(get_pid))"
+            echo "Endpoint: http://127.0.0.1:${PORT}"
+            echo "Idle auto-shutdown: ${SOLVER_IDLE_MINUTES:-30} minutes"
+            return 0
+        fi
+        echo -n "."
+        sleep 1
+    done
+    echo " FAILED to respond within 30s. Check logs: $LOG_FILE"
+    return 1
+}
+
+stop_solver() {
+    if ! is_running; then
+        echo "Solver is not running."
+        return 0
+    fi
+
+    local pid
+    pid="$(get_pid)"
+    echo "Stopping Captcha Solver (PID: ${pid})..."
+    
+    if [ -n "$pid" ]; then
+        kill -TERM "$pid" 2>/dev/null || true
+        for _ in {1..10}; do
+            if ! is_running; then
+                break
+            fi
+            sleep 1
+        done
+    fi
+
+    if is_running; then
+        echo "Force killing remaining solver processes on port ${PORT}..."
+        fuser -k "${PORT}/tcp" 2>/dev/null || true
+        sleep 1
+    fi
+
+    echo "Solver stopped. RAM released."
+}
+
+status_solver() {
+    if ! is_running; then
+        echo "Status: OFFLINE (Port ${PORT} free)"
+        return 0
+    fi
+
+    local pid
+    pid="$(get_pid)"
+    echo "Status: ONLINE"
+    echo "Port  : ${PORT} (PID: ${pid})"
+
+    # RAM calculation
+    if [ -n "$pid" ] && command -v ps >/dev/null 2>&1; then
+        # Sum RSS of python + xvfb + chromium spawned by this session
+        local total_mb
+        total_mb=$(ps -eo rss,cmd | awk '/(server\.py|Xvfb|cloakbrowser|chrome)/ {sum += $1} END {printf "%.1f", sum/1024}')
+        echo "RAM   : ~${total_mb} MB (server + Xvfb + warm Chromium pool)"
+    fi
+
+    # API Health & Buffer check
+    local health_json
+    health_json=$(curl -s -m 3 "http://127.0.0.1:${PORT}/health" 2>/dev/null || echo "{}")
+    if [ -n "$health_json" ] && [ "$health_json" != "{}" ]; then
+        echo "Health: OK"
+    fi
+
+    echo "Logs  : tail -f ${LOG_FILE}"
+}
+
+test_solver() {
+    if ! is_running; then
+        echo "Solver is not running. Start it first: ./solve-ctl start"
+        return 1
+    fi
+
+    echo "Running live self-test on local solver (:8877)..."
+    python3 -c "
+import urllib.request, json, time
+
+def run_test(name, payload):
+    req = urllib.request.Request(
+        'http://127.0.0.1:${PORT}/solve',
+        data=json.dumps(payload).encode(),
+        headers={'Content-Type': 'application/json'}
+    )
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            d = json.loads(resp.read().decode())
+            dur = round((time.time() - t0), 2)
+            tok = d.get('token')
+            tok_str = f'{len(tok)} chars' if isinstance(tok, str) else str(tok)[:15]
+            method = d.get('method', 'unknown')
+            print(f'  [PASS] {name:20} -> solved: {d.get(\"solved\")} | time: {dur}s | method: {method} | token: {tok_str}')
+    except Exception as e:
+        dur = round((time.time() - t0), 2)
+        print(f'  [FAIL] {name:20} -> {type(e).__name__}: {e} ({dur}s)')
+
+# 1. Turnstile (x.ai) - tests buffer & route interception
+run_test('Turnstile (x.ai)', {
+    'type': 'turnstile',
+    'sitekey': '0x4AAAAAAAhr9JGVDZbrZOo0',
+    'url': 'https://accounts.x.ai/sign-up',
+    'timeout_s': 60
+})
+
+# 2. reCAPTCHA v2 (Google demo) - tests warm context & token harvest
+run_test('reCAPTCHA v2', {
+    'type': 'recaptcha',
+    'version': 'v2',
+    'sitekey': '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI',
+    'url': 'https://www.google.com/recaptcha/api2/demo',
+    'timeout_s': 60
+})
+
+# 3. hCaptcha (Demo) - tests route interception
+run_test('hCaptcha demo', {
+    'type': 'hcaptcha',
+    'sitekey': '10000000-ffff-ffff-ffff-000000000001',
+    'url': 'https://accounts.hcaptcha.com/demo',
+    'timeout_s': 60
+})
+"
+}
+
+logs_solver() {
+    tail -n 30 -f "$LOG_FILE"
+}
+
+case "${1:-status}" in
+    start)
+        start_solver
+        ;;
+    stop)
+        stop_solver
+        ;;
+    restart)
+        stop_solver
+        sleep 2
+        start_solver
+        ;;
+    status)
+        status_solver
+        ;;
+    test)
+        test_solver
+        ;;
+    logs)
+        logs_solver
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status|test|logs}"
+        exit 1
+        ;;
+esac

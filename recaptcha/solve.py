@@ -288,7 +288,43 @@ async def solve_recaptcha_v3_realpage(url: str, sitekey: str, action: str = "sub
 
 # ── v2 checkbox: click + (best-effort) audio fallback ───────────────
 
+async def _find_anchor_frame(page):
+    """Find the anchor frame containing #recaptcha-anchor."""
+    for fr in page.frames:
+        if "/anchor" in (fr.url or "") or "recaptcha" in (fr.url or ""):
+            try:
+                if await fr.query_selector("#recaptcha-anchor"):
+                    return fr
+            except Exception:
+                continue
+    return None
+
+
+async def _click_anchor(page) -> bool:
+    """Click #recaptcha-anchor directly on the frame to bypass chained locator restrictions."""
+    fr = await _find_anchor_frame(page)
+    if fr:
+        try:
+            await fr.click("#recaptcha-anchor", timeout=5000)
+            return True
+        except Exception:
+            pass
+    try:
+        await page.frame_locator(_ANCHOR_IFRAME).locator("#recaptcha-anchor").click(timeout=5000)
+        return True
+    except Exception:
+        return False
+
+
 async def _anchor_class(page) -> str:
+    fr = await _find_anchor_frame(page)
+    if fr:
+        try:
+            el = await fr.query_selector("#recaptcha-anchor")
+            if el:
+                return await el.get_attribute("class") or ""
+        except Exception:
+            pass
     try:
         return await page.frame_locator(_ANCHOR_IFRAME).locator(
             "#recaptcha-anchor").get_attribute("class", timeout=3000) or ""
@@ -344,15 +380,10 @@ async def solve_recaptcha_v2(sitekey: str, url: str,
                 for attempt in range(1, max_attempts + 1):
                     log.info("v2 attempt %d/%d", attempt, max_attempts)
                     for _ctry in range(3):
-                        try:
-                            await page.frame_locator(_ANCHOR_IFRAME).locator(
-                                "#recaptcha-anchor").click(timeout=8000)
+                        if await _click_anchor(page):
                             break
-                        except Exception as e:
-                            log.warning("checkbox click attempt %d: %s",
-                                        _ctry + 1, str(e).splitlines()[0])
-                            if _ctry < 2:
-                                await asyncio.sleep(1)
+                        if _ctry < 2:
+                            await asyncio.sleep(1)
 
                     # Poll: checked (no-challenge win) OR an image grid opens.
                     challenge = False
@@ -425,11 +456,8 @@ async def solve_recaptcha_v2_realpage(url: str, sitekey: str = None,
                         " document.head.appendChild(s); }", sitekey)
                     await asyncio.sleep(3)
 
-                try:
-                    await page.frame_locator(_ANCHOR_IFRAME).locator(
-                        "#recaptcha-anchor").click(timeout=8000)
-                except Exception as e:
-                    log.warning("realpage checkbox click: %s", str(e).splitlines()[0])
+                if not await _click_anchor(page):
+                    log.warning("realpage checkbox click failed")
 
                 token = ""
                 deadline = time.monotonic() + timeout_s
