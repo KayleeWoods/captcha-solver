@@ -23,7 +23,13 @@ from pathlib import Path
 import cloakbrowser
 
 from common.mistral import KeyPool
-from common.browser import browser_kwargs, run_pre_actions, run_post_fetch, route_glob
+from common.browser import (
+    browser_kwargs,
+    route_glob,
+    run_post_fetch,
+    run_pre_actions,
+    warm_context,
+)
 
 log = logging.getLogger(__name__)
 _solve_lock = asyncio.Lock()
@@ -182,8 +188,8 @@ async def solve_hcaptcha(sitekey: str, url: str, max_attempts: int = 3) -> dict:
         div = f'<div class="h-captcha" data-sitekey="{sitekey}"></div>'
         page_data = HTML_TEMPLATE.replace("<!-- hcaptcha widget -->", div)
 
-        async with await cloakbrowser.launch_async(**_browser_kwargs()) as browser:
-            page = await browser.new_page()
+        async with warm_context() as ctx:
+            page = await ctx.new_page()
             try:
                 await page.route(route_glob(url), lambda r: r.fulfill(body=page_data, status=200))
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -240,8 +246,8 @@ async def solve_hcaptcha_invisible(sitekey: str, url: str) -> dict:
     t0 = time.monotonic()
     body = _INVISIBLE_PAGE.replace("__SITEKEY__", sitekey)
     async with _solve_lock:
-        async with await cloakbrowser.launch_async(**_browser_kwargs()) as browser:
-            page = await browser.new_page()
+        async with warm_context() as ctx:
+            page = await ctx.new_page()
             try:
                 await page.route(route_glob(url), lambda r: r.fulfill(body=body, status=200))
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -305,8 +311,8 @@ async def solve_hcaptcha_realpage(url: str, sitekey: str = None,
     """
     t0 = time.monotonic()
     async with _solve_lock:
-        async with await cloakbrowser.launch_async(**_browser_kwargs()) as browser:
-            page = await browser.new_page()
+        async with warm_context() as ctx:
+            page = await ctx.new_page()
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=45000)
                 if pre_actions:

@@ -18,7 +18,12 @@ import time
 
 import cloakbrowser
 
-from common.browser import browser_kwargs, run_pre_actions, run_post_fetch
+from common.browser import (
+    browser_kwargs,
+    run_post_fetch,
+    run_pre_actions,
+    warm_context,
+)
 from turnstile.solve import _click_turnstile_checkbox
 
 log = logging.getLogger(__name__)
@@ -64,8 +69,8 @@ async def solve_cf_clearance(url: str, proxy: str = None, timeout_s: int = 60,
     and return cf_clearance + everything needed to replay it from the same IP/UA."""
     t0 = time.monotonic()
     async with _solve_lock:
-        async with await cloakbrowser.launch_async(**_kwargs(proxy)) as browser:
-            page = await browser.new_page()
+        async with warm_context(proxy=proxy) as ctx:
+            page = await ctx.new_page()
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=45000)
                 if pre_actions:

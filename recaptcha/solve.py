@@ -25,8 +25,14 @@ from pathlib import Path
 
 import cloakbrowser
 
-from common.browser import browser_kwargs, run_pre_actions, run_post_fetch, route_glob
 from common.mistral import KeyPool
+from common.browser import (
+    browser_kwargs,
+    route_glob,
+    run_post_fetch,
+    run_pre_actions,
+    warm_context,
+)
 from .image_solve import solve_image_challenge
 
 log = logging.getLogger(__name__)
@@ -125,8 +131,8 @@ async def _solve_via_execute(sitekey: str, url: str, action: str,
     body = (_V3_PAGE.replace("__LIB__", lib).replace("__NS__", ns)
             .replace("__SITEKEY__", sitekey).replace("__ACTION__", action))
     async with _solve_lock:
-        async with await cloakbrowser.launch_async(**_browser_kwargs()) as browser:
-            page = await browser.new_page()
+        async with warm_context() as ctx:
+            page = await ctx.new_page()
             try:
                 await page.route(route_glob(url), lambda r: r.fulfill(body=body, status=200))
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -251,8 +257,8 @@ async def solve_recaptcha_v3_realpage(url: str, sitekey: str, action: str = "sub
     lib = "enterprise.js" if enterprise else "api.js"
     ns = "enterprise" if enterprise else "standard"
     async with _solve_lock:
-        async with await cloakbrowser.launch_async(**_browser_kwargs()) as browser:
-            page = await browser.new_page()
+        async with warm_context() as ctx:
+            page = await ctx.new_page()
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=45000)
                 if pre_actions:
@@ -328,8 +334,8 @@ async def solve_recaptcha_v2(sitekey: str, url: str,
     page_data = _build_v2_page(sitekey, enterprise=enterprise)
 
     async with _solve_lock:
-        async with await cloakbrowser.launch_async(**_browser_kwargs()) as browser:
-            page = await browser.new_page()
+        async with warm_context() as ctx:
+            page = await ctx.new_page()
             try:
                 await page.route(route_glob(url), lambda r: r.fulfill(body=page_data, status=200))
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -402,8 +408,8 @@ async def solve_recaptcha_v2_realpage(url: str, sitekey: str = None,
     """
     t0 = time.monotonic()
     async with _solve_lock:
-        async with await cloakbrowser.launch_async(**_browser_kwargs()) as browser:
-            page = await browser.new_page()
+        async with warm_context() as ctx:
+            page = await ctx.new_page()
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=45000)
                 if pre_actions:
