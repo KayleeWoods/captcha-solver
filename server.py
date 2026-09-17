@@ -9,6 +9,7 @@ import socket
 import sys
 import time
 from collections import deque
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -48,11 +49,30 @@ _TAGS = [
 # neutral placeholder; the live service injects its real domain at runtime via SOLVER_PUBLIC_URL.
 _PUBLIC_URL = os.getenv("SOLVER_PUBLIC_URL", "https://solver.example.com")
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    log.info("Pre-warming stealth Chromium...")
+    try:
+        await browser_manager.get_browser()
+        log.info("Stealth Chromium warm and ready.")
+    except Exception as e:
+        log.warning("Could not pre-warm browser on startup: %s", e)
+    await token_buffer.start()
+    try:
+        yield
+    finally:
+        log.info("Stopping token buffer...")
+        await token_buffer.stop()
+        log.info("Shutting down warm Chromium...")
+        await browser_manager.close()
+
+
 app = FastAPI(
     title="Captcha Solver",
     description=_DESCRIPTION,
     version="1.0.0",
     openapi_tags=_TAGS,
+    lifespan=lifespan,
     contact={"name": "solver", "url": _PUBLIC_URL},
     servers=[
         {"url": _PUBLIC_URL, "description": "Public (Bearer token required)"},
@@ -66,25 +86,6 @@ app = FastAPI(
         "filter": True,
     },
 )
-
-
-@app.on_event("startup")
-async def on_startup():
-    log.info("Pre-warming stealth Chromium...")
-    try:
-        await browser_manager.get_browser()
-        log.info("Stealth Chromium warm and ready.")
-    except Exception as e:
-        log.warning("Could not pre-warm browser on startup: %s", e)
-    await token_buffer.start()
-
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    log.info("Stopping token buffer...")
-    await token_buffer.stop()
-    log.info("Shutting down warm Chromium...")
-    await browser_manager.close()
 
 
 # Non-enforcing Bearer scheme: makes Swagger UI show an Authorize button and forward the
