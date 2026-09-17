@@ -86,8 +86,11 @@ async def _classify_grid(bf, keypool, target: str, n: int) -> list:
         tile = img.crop((c * tw, r * th, (c + 1) * tw, (r + 1) * th))
         buf = io.BytesIO(); tile.save(buf, "PNG")
         b64 = base64.b64encode(buf.getvalue()).decode()
-        async with sem:  # bound concurrent Mistral calls (thread-pool + rate)
-            yes = await asyncio.to_thread(keypool.classify, b64, target)
+        async with sem:  # bound concurrent vision calls
+            if hasattr(keypool, "classify_async"):
+                yes = await keypool.classify_async(b64, target)
+            else:
+                yes = await asyncio.to_thread(keypool.classify, b64, target)
         return idx if yes else None
 
     tasks = [judge(r * n + c, r, c) for r in range(n) for c in range(n)]

@@ -103,7 +103,10 @@ async def _pick_cells(fr, keypool, target: str, grid: int = _GRID) -> list[int]:
         f"Reply ONLY the cell number(s) that satisfy the task, comma-separated "
         f"(e.g. `3` or `1,4,9`), or `none`."
     )
-    text = await asyncio.to_thread(keypool.ask, gridded, prompt)
+    if hasattr(keypool, "ask_async"):
+        text = await keypool.ask_async(gridded, prompt)
+    else:
+        text = await asyncio.to_thread(keypool.ask, gridded, prompt)
     log.info("_pick_cells(%r) -> %s", target, text[:120])
     nums = []
     for m in re.finditer(r"\d+", text):
@@ -172,7 +175,10 @@ async def _solve_drag(fr, page, keypool) -> bool:
         f"Reply ONLY two cell numbers: `source,target` — the block to drag, "
         f"then where to drop it (e.g. `4,10`)."
     )
-    text = await asyncio.to_thread(keypool.ask, gridded, prompt)
+    if hasattr(keypool, "ask_async"):
+        text = await keypool.ask_async(gridded, prompt)
+    else:
+        text = await asyncio.to_thread(keypool.ask, gridded, prompt)
     log.info("_solve_drag -> %s", text[:100])
     nums = re.findall(r"\d+", text)
     if len(nums) < 2:

@@ -18,6 +18,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "2")
 os.environ.setdefault("ORT_NUM_THREADS", "2")
 
 import ast
+import asyncio
 import base64
 import io
 import logging
@@ -156,6 +157,18 @@ class HybridClassifier:
         # unknown target -> Mistral fallback (if configured)
         if self.keypool is not None:
             return self.keypool.classify(image_b64, target, max_keys, timeout)
+        log.warning("target %r unknown and no Mistral fallback — treating as no-match",
+                    target)
+        return False
+
+    async def classify_async(self, image_b64: str, target: str,
+                             max_keys: int = 8, timeout: int = 40) -> bool:
+        if _normalize_target(target) is not None:
+            return self.onnx.classify(image_b64, target, max_keys, timeout)
+        if self.keypool is not None:
+            if hasattr(self.keypool, "classify_async"):
+                return await self.keypool.classify_async(image_b64, target, max_keys, timeout)
+            return await asyncio.to_thread(self.keypool.classify, image_b64, target, max_keys, timeout)
         log.warning("target %r unknown and no Mistral fallback — treating as no-match",
                     target)
         return False
