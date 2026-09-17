@@ -5,6 +5,8 @@ export PORT=8877
 export TURNSTILE_HEADLESS=0
 export TURNSTILE_MAX_CONCURRENT=2
 export CLOAKBROWSER_SUPPRESS_FONT_WARNING=1
+# Auto-shutdown after N minutes of inactivity to free RAM (0 to disable)
+export SOLVER_IDLE_MINUTES="${SOLVER_IDLE_MINUTES:-30}"
 # optional sticky proxy for solves
 # export TURNSTILE_PROXY="http://user:pass@host:port"
 source .venv/bin/activate

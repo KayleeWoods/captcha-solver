@@ -539,3 +539,4 @@ captcha-solver/
 4. **Low-Resource VPS Profile:**
    - Xvfb display calibrated to **1280x720x16** in `start.sh`, reducing software rasterizer CPU load by ~60% on headless ARM64 systems.
    - Chromium memory throttles injected: `--js-flags=--max-old-space-size=256`, `--disk-cache-size=10485760`, `--disable-dev-shm-usage`.
+   - **Auto-Shutdown Idle Watchdog (`SOLVER_IDLE_MINUTES=30`):** Automatically terminates the server, warm Chromium, and Xvfb when no solves occur for 30 minutes, releasing 100% of RAM when not in use. Set `SOLVER_IDLE_MINUTES=0` to keep alive indefinitely.

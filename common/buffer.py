@@ -41,6 +41,10 @@ class TokenBuffer:
         self._harvest_tasks: set = set()
         self._worker_task = None
         self._running = False
+        self._last_request = time.monotonic()
+
+    def mark_activity(self):
+        self._last_request = time.monotonic()
 
     def _parse_targets(self) -> list[tuple[str, str]]:
         targets = []
@@ -53,6 +57,7 @@ class TokenBuffer:
 
     async def get_token(self, sitekey: str, url: str) -> dict | None:
         """Attempt to pop a valid pre-harvested token from the buffer."""
+        self.mark_activity()
         key = (sitekey, url)
         async with self._lock:
             pool = self._pools.get(key, [])
@@ -130,6 +135,11 @@ class TokenBuffer:
         await asyncio.sleep(5)
         while self._running:
             try:
+                # If no user request has arrived in 10 minutes, enter idle pause
+                if time.monotonic() - self._last_request > 600:
+                    await asyncio.sleep(30)
+                    continue
+
                 targets = self._parse_targets()
                 for sitekey, url in targets:
                     if not self._running:

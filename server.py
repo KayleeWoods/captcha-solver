@@ -5,6 +5,7 @@ import itertools
 import json
 import logging
 import os
+import signal
 import socket
 import sys
 import time
@@ -48,6 +49,9 @@ _TAGS = [
 # Public base URL shown in the OpenAPI docs (contact + servers dropdown). The repo ships a
 # neutral placeholder; the live service injects its real domain at runtime via SOLVER_PUBLIC_URL.
 _PUBLIC_URL = os.getenv("SOLVER_PUBLIC_URL", "https://solver.example.com")
+SOLVER_IDLE_MINUTES = int(os.getenv("SOLVER_IDLE_MINUTES", "30"))
+_last_activity_time = time.monotonic()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -58,9 +62,25 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning("Could not pre-warm browser on startup: %s", e)
     await token_buffer.start()
+
+    async def _idle_watchdog():
+        if SOLVER_IDLE_MINUTES <= 0:
+            return
+        log.info("Idle auto-shutdown enabled: will terminate after %d minutes of inactivity", SOLVER_IDLE_MINUTES)
+        idle_limit_s = SOLVER_IDLE_MINUTES * 60
+        while True:
+            await asyncio.sleep(20)
+            idle_elapsed = time.monotonic() - _last_activity_time
+            if idle_elapsed >= idle_limit_s and not _solve_current:
+                log.info("Server idle for %.1f minutes with no active solves. Auto-shutting down to free RAM...", idle_elapsed / 60)
+                os.kill(os.getpid(), signal.SIGTERM)
+                break
+
+    watchdog_task = asyncio.create_task(_idle_watchdog())
     try:
         yield
     finally:
+        watchdog_task.cancel()
         log.info("Stopping token buffer...")
         await token_buffer.stop()
         log.info("Shutting down warm Chromium...")
@@ -577,6 +597,9 @@ async def solve(req: SolveRequest = Body(..., openapi_examples=_SOLVE_EXAMPLES))
     FastAPI's `{detail}` envelope (400 bad input, 408 timeout, 422 schema, 500 crash).
     So: 2xx → read `solved`; non-2xx → read `detail`. Never both.
     """
+    global _last_activity_time
+    _last_activity_time = time.monotonic()
+
     if req.type not in SUPPORTED:
         raise HTTPException(400, f"Unsupported type: {req.type}. Supported: {SUPPORTED}")
     # Self-URL solvers default their own canonical URL so downstream logging has a str.
