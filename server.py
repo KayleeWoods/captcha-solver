@@ -17,6 +17,7 @@ from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
 from common.browser import browser_manager
+from common.buffer import token_buffer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("captcha-solver")
@@ -75,10 +76,13 @@ async def on_startup():
         log.info("Stealth Chromium warm and ready.")
     except Exception as e:
         log.warning("Could not pre-warm browser on startup: %s", e)
+    await token_buffer.start()
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    log.info("Stopping token buffer...")
+    await token_buffer.stop()
     log.info("Shutting down warm Chromium...")
     await browser_manager.close()
 
@@ -406,6 +410,10 @@ async def _dispatch(req: SolveRequest) -> dict:
                 r = await solve_turnstile_realpage(
                     req.url, req.sitekey, req.timeout_s, actions, fetches)
             else:
+                if not req.proxy and not req.action and not req.cdata and req.sitekey and req.url:
+                    cached = await token_buffer.get_token(req.sitekey, req.url)
+                    if cached:
+                        return {"type": "turnstile", **cached}
                 r = await solve_turnstile(req.sitekey, req.url, req.action, req.cdata,
                                           proxy=req.proxy)
         except TimeoutError as e:
