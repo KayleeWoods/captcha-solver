@@ -17,11 +17,11 @@ import httpx
 log = logging.getLogger(__name__)
 
 # B.AI OpenAI-compatible endpoint & model
-_ENDPOINT = os.getenv("VISION_API_ENDPOINT", "https://api.b.ai/v1/chat/completions")
-_DEFAULT_MODEL = os.getenv("VISION_API_MODEL", "glm-5.3-flash")
+_ENDPOINT = os.getenv("VISION_API_ENDPOINT", "http://127.0.0.1:20128/v1/chat/completions")
+_DEFAULT_MODEL = os.getenv("VISION_API_MODEL", "ag/gemini-3.8-flash-high")
 _ROTATE_STATUS = {400, 401, 403, 429}
 _COOLDOWN_S = 60  # wall-clock park duration for a failed key
-_PER_KEY_TIMEOUT = 5.0  # fast failover to prevent stalling
+_PER_KEY_TIMEOUT = 90.0  # 9router vision can take >30s on cold ag/* lanes
 
 
 class KeyPool:
@@ -67,6 +67,7 @@ class KeyPool:
     def _format_payload(self, image_b64: str, prompt: str, max_tokens: int) -> dict:
         return {
             "model": self.model,
+            "stream": False,
             "messages": [{"role": "user", "content": [
                 {"type": "text", "text": prompt},
                 {"type": "image_url",
@@ -131,7 +132,8 @@ class KeyPool:
                     continue
                 return self._extract_text(r.json())
             except Exception as e:
-                last_err = str(e).splitlines()[0]
+                emsg = str(e).splitlines()
+                last_err = emsg[0] if emsg else repr(e)[:120]
                 self._park(key)
                 continue
         log.warning("_call_async failed for %r after key rotation: %s", prompt[:60], last_err)

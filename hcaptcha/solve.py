@@ -50,7 +50,7 @@ def _get_keypool():
             log.warning("hCaptcha image challenges unavailable until %s is provided", _KEYFILE)
         return None
     if _keypool is None:
-        model = os.getenv("HCAPTCHA_MISTRAL_MODEL", "mistral-medium-latest")
+        model = os.getenv("HCAPTCHA_MISTRAL_MODEL", "ag/gemini-3.8-flash-high")
         _keypool = KeyPool(str(_KEYFILE), model=model, start_index=os.getpid())
     return _keypool
 

@@ -41,11 +41,21 @@ _KEYFILE = (Path(__file__).parent.parent / "common" / "bai_keys.txt" if (Path(__
 _keypool = None
 
 
+def _rc_proxy():
+    """Sticky proxy for reCAPTCHA solves.
+
+    reCAPTCHA tokens are scored on the client IP at mint time and the site that
+    consumes them usually submits from the same exit, so the solver must borrow
+    the caller's sticky residential line. Empty/missing -> VPS IP.
+    """
+    return os.getenv("RECAPTCHA_PROXY") or None
+
+
 def _build_keypool():
     if not _KEYFILE.exists():
         log.warning("Mistral key pool unavailable: %s not found", _KEYFILE)
         return None
-    model = os.getenv("RECAPTCHA_MISTRAL_MODEL", "mistral-medium-latest")
+    model = os.getenv("RECAPTCHA_MISTRAL_MODEL", "ag/gemini-3.8-flash-high")
     # vary the start offset by pid so concurrent procs don't hammer key #0
     return KeyPool(str(_KEYFILE), model=model, start_index=os.getpid())
 
@@ -131,7 +141,7 @@ async def _solve_via_execute(sitekey: str, url: str, action: str,
     body = (_V3_PAGE.replace("__LIB__", lib).replace("__NS__", ns)
             .replace("__SITEKEY__", sitekey).replace("__ACTION__", action))
     async with _solve_lock:
-        async with warm_context() as ctx:
+        async with warm_context(_rc_proxy()) as ctx:
             page = await ctx.new_page()
             try:
                 await page.route(route_glob(url), lambda r: r.fulfill(body=body, status=200))
@@ -257,7 +267,7 @@ async def solve_recaptcha_v3_realpage(url: str, sitekey: str, action: str = "sub
     lib = "enterprise.js" if enterprise else "api.js"
     ns = "enterprise" if enterprise else "standard"
     async with _solve_lock:
-        async with warm_context() as ctx:
+        async with warm_context(_rc_proxy()) as ctx:
             page = await ctx.new_page()
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=45000)
@@ -370,7 +380,7 @@ async def solve_recaptcha_v2(sitekey: str, url: str,
     page_data = _build_v2_page(sitekey, enterprise=enterprise)
 
     async with _solve_lock:
-        async with warm_context() as ctx:
+        async with warm_context(_rc_proxy()) as ctx:
             page = await ctx.new_page()
             try:
                 await page.route(route_glob(url), lambda r: r.fulfill(body=page_data, status=200))
@@ -439,7 +449,7 @@ async def solve_recaptcha_v2_realpage(url: str, sitekey: str = None,
     """
     t0 = time.monotonic()
     async with _solve_lock:
-        async with warm_context() as ctx:
+        async with warm_context(_rc_proxy()) as ctx:
             page = await ctx.new_page()
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=45000)
